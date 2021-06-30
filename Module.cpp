@@ -18,7 +18,6 @@
 #include <sstream>
 #include "global.h"
 #include <unordered_map>
-#include </opt/intel/vtune_profiler_2020.2.0.610396/include/ittnotify.h>
 #include <chrono>
 
 
@@ -40,8 +39,8 @@ struct MoveSummary {
 	double newSumExitPr;// SUM(q_i) = this.sumAllExitPr + q_1_new + q_2_new - q_1_old - q_2_old.
 };
 
-const double Network::alpha;
-const double Network::beta;
+constexpr double Network::alpha;
+constexpr double Network::beta;
 // Constructors of Module class.
 Module::Module() :
 		index(0), exitPr(0.0), stayPr(0.0), sumPr(0.0), sumTPWeight(0.0), sumDangling(
@@ -1378,28 +1377,6 @@ int Network::prioritize_move(double vThresh, int numTh, bool inWhile)
 		flowmap inFlowFromMod; // <modId, flow> for inFlow...
 		
 		flowmap::iterator iter;	
-		
-		int temp1, temp2;
-		double val1, val2, val3;
-
-		for (link_iterator linkIt = nd.outLinks.begin(); linkIt != nd.outLinks.end(); linkIt++) 
-		{
-			int newMod = nodes[linkIt->first].modIdx;
-			
-			temp1 = rand()%2;			//placeholder operation instead of hash find
-
-			if (temp1) 
-			{
-				val1 += beta * linkIt->second;	//placeholder operation instead of hash update
-			} 
-			else 
-			{
-				val2 = beta * linkIt->second; 	//placeholder operation instead of hash insert
-				val3 = 0.0;			//placeholder operation instead of hash	insert
-				temp2++;			//placeholder operation for integer increment
-			}
-		}
-
 			
 		auto tik = std::chrono::high_resolution_clock::now();
 
@@ -1626,7 +1603,7 @@ int Network::prioritize_move(double vThresh, int numTh, bool inWhile)
 		}
 		auto dong = std::chrono::high_resolution_clock::now();
 
-		if(tid == 13)
+		if(tid == 0)
 		bestModuleSelectionTime += std::chrono::duration_cast<std::chrono::nanoseconds>(dong - ding).count();
 
 		#pragma omp critical
@@ -1636,7 +1613,7 @@ int Network::prioritize_move(double vThresh, int numTh, bool inWhile)
 
 		auto tok = std::chrono::high_resolution_clock::now();
 	
-		if(tid == 13)
+		if(tid == 0)
 		prioritizeMoveNodeAccessTimeChunk += std::chrono::duration_cast<std::chrono::nanoseconds>(tok - tik).count();
 
 	}
@@ -3355,7 +3332,7 @@ int Network::prioritize_moveSPnodes(double vThresh, int numTh, int iteration, bo
 		
 		auto dong = std::chrono::high_resolution_clock::now();
 
-		if(tid == 13)
+		if(tid == 0)
 		bestSpModuleSelectionTime += std::chrono::duration_cast<std::chrono::nanoseconds>(dong - ding).count();
 		
 		#pragma omp critical
@@ -3364,7 +3341,7 @@ int Network::prioritize_moveSPnodes(double vThresh, int numTh, int iteration, bo
 		}
 
 		auto tok = std::chrono::high_resolution_clock::now();
-		if(tid == 13)
+		if(tid == 0)
 		prioritizeSpNodeModuleAccessTimeChunk += std::chrono::duration_cast<std::chrono::nanoseconds>(tok - tik).count();
 
 		threadtimes[tid] += std::chrono::duration_cast<std::chrono::nanoseconds>(tok - tik).count();
@@ -4118,6 +4095,170 @@ int Network::old_prioritize_moveSPnodes(double vThresh, int tag, int iteration,
 	total_time_prioritize_Spmove += endPrio_moveSPnodes - startPrio_moveSPnodes;
 
 	return numMoved;
+}
+
+double Network::computeNMI(string truthfile)
+{
+	truthfile += "_truth.txt";
+	
+	ifstream input(truthfile);
+	
+	if(input == nullptr)
+	{
+		cout<<"File not found"<<"**********"<<truthfile<<"************"<<endl;
+	}
+	
+	map<int,double>classlabels;
+	map<int,double>clusterlabels;
+	map<int,vector<int>>clustermembers;
+	
+	vector<int>node2class;
+	node2class.resize(nNode);
+	
+	int a, b;
+	int numvertices = 0;
+	
+	double H_Y = 0.0;
+	double H_C = 0.0;
+	double D_check = 0.0;
+	double H_YC = 0.0;
+	double I_YC = 0.0;
+	double NMI_YC = 0.0;
+	
+	map<int,double>::iterator iter;
+	map<int,vector<int>>::iterator itmembers;
+	
+	while(input>>a>>b)
+	{
+		numvertices++;
+		
+		node2class[a] = b;		//the truth partition/community "b" of the vertex "a" is stored 
+		
+		iter = classlabels.find(b);
+		
+		if(iter != classlabels.end())
+		{
+			iter->second += 1.0;
+		}
+		else
+		{
+			classlabels[b] = 1.0;
+		}
+	}
+	
+	for(map<int,double>::iterator it = classlabels.begin(); it != classlabels.end(); it++)
+	{
+		double temp = it->second/numvertices;
+		if(temp > 0.00000000000001)
+		{
+			H_Y -= (temp)*log2(temp);
+		}	
+	}
+	
+	for (int i = 0; i < nNode; i++) 
+	{
+		int modId = nodes[i].modIdx;
+		
+		iter = clusterlabels.find(modId);
+		
+		if(iter != clusterlabels.end())
+		{
+			iter->second += 1.0;
+		}
+		else
+		{
+			clusterlabels[modId] = 1.0;
+		}
+	}
+	
+	for(int i = 0; i < nNode; i++)
+	{
+		int modId = nodes[i].modIdx;
+		
+		itmembers = clustermembers.find(modId);
+		
+		if(itmembers != clustermembers.end())
+		{
+			itmembers->second.push_back(i);
+		}
+		else
+		{
+			vector<int>tmpvector;
+			tmpvector.push_back(i);
+			clustermembers[modId] = tmpvector;
+		}
+	}
+	
+	int numclusters = clusterlabels.size();
+	
+	for(map<int,double>::iterator it = clusterlabels.begin(); it != clusterlabels.end(); it++)
+	{
+		double temp = it->second/nNode;
+		
+		if(temp > 0.00000000000001)
+		{
+			H_C -= (temp)*log2(temp);
+		}
+	}
+	
+	for(map<int,vector<int>>::iterator it = clustermembers.begin(); it != clustermembers.end(); it++)
+	{
+		double temp = (double)((it->second.size()*1.0)/nNode);
+		
+		if(temp > 0.00000000000001)
+		{
+			D_check -= (temp)*log2(temp);
+		}
+		
+		map<int,double> buckets;
+		
+		int clustersize = it->second.size();
+		
+		vector<int>& vect = it->second;
+		
+		for(auto number:vect)
+		{
+			int original_class = node2class[number];
+			
+			map<int,double>::iterator bkt_iterator;
+			
+			bkt_iterator = buckets.find(original_class);
+			
+			if(bkt_iterator != buckets.end())
+			{
+				bkt_iterator->second += 1.0;
+			}
+			else
+			{
+				buckets[original_class] = 1.0;
+			}
+		}
+		
+		double tempH_YC = 0.0;
+		
+		for(map<int,double>::iterator bkt_it = buckets.begin(); bkt_it != buckets.end(); bkt_it++)
+		{
+			double y_prob = (double)(bkt_it->second/clustersize);
+			
+			if(y_prob > 0.00000000000001)
+			{
+				tempH_YC -= (y_prob)*log2(y_prob);
+			}
+		}
+		
+		H_YC += (double) (1.0 / numclusters) * tempH_YC;
+	}
+	
+	I_YC = H_Y - H_YC;
+	
+	NMI_YC = ((2.0)*(I_YC))/((H_Y + H_C));
+	
+	printf("\n********H_Y:%f*********H_C:%f**********D_check:%f**********H_YC:%f*********I_YC:%f**********NMI_YC:%f************\n", H_Y, H_C, D_check, H_YC, I_YC, NMI_YC);
+	
+	input.close();
+	
+	return NMI_YC;
+	
 }
 
 double Network::calculateModularityScore() {
