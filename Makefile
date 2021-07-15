@@ -2,35 +2,24 @@
 CXX  = mpic++
 LINK = $(CXX)
 #CXXFLAGS = -I -Wall -g 
-CXXFLAGS = -g -Wall -O3 -fopenmp --std=c++11 #-I #-Wall -O3 -funroll-loops -pipe 
+CXXFLAGS = -g -Wall -O3 -fopenmp --std=c++11  -I/usr/asa_install/include #-I #-Wall -O3 -funroll-loops -pipe 
 #CXXFLAGS = -g -Wall -fopenmp #-I #-Wall -O3 -funroll-loops -pipe 
-LFLAGS =  -g -fopenmp -Wall -O3
+LFLAGS =  -g -fopenmp -Wall -Werror -O3
 
+LIB=-L/usr/asa_install/lib/x86_64-linux-gnu
+LDFLAGS="-Wl,-rpath,/usr/asa_install/lib/x86_64-linux-gnu"
 
 TARGET  = ompInfomap
-
 
 HEADER  = Node.h Module.h FileIO.h timing.h global.h
 FILES = OmpRelaxmap.cpp Node.cpp Module.cpp FileIO.cpp timing.cpp global.cpp
 
-
 OBJECTS = $(FILES:.cpp=.o)
 
-ASMS = $(FILES:.cpp=.s)
-
-
 $(TARGET): ${OBJECTS}
-	$(LINK) $(LFLAGS) $^ -o $@ -lmetis
+	$(LINK) $(LFLAGS) $(LIB) $(LDFLAGS) $^ -o  $@ -lasa
 
-%.s:%.cpp
-	$(LINK) $(LFLAGS) --std=c++11 -fverbose-asm -S $< -o $@
-
-
-asm: $(ASMS)
-
-
-
-all: $(TARGET) asm
+all: $(TARGET)
 
 clean:
 	rm -f $(OBJECTS)
