@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <vector>
 #include <map>
+#include<climits>
 
 using namespace std;
 
@@ -30,6 +31,12 @@ bool hooking;
 size_t maxk;
 std::vector<std::vector<int>> intersectlist;
 std::map<pair<int, int>, int>trussk;
+std::map<int, vector<pair<int, int>>>trussgroups;
+std::map<pair<int, int>, int> edge2index;
+//std::vector<std::set<pair<pair<int, int>, pair<int, int>>>> super_edges;
+std::vector<std::set<pair<int, int>>> super_edges;
+std::vector<std::pair<int, int>> summary_graph;
+int kmin, kmax;
 
 namespace
 {
@@ -101,6 +108,8 @@ EdgeList ReadEdgeListFromFile(const char* filename)
 	string line = "";
 	numEdges = 0;
 
+	int index = 0;
+
 	while (getline(infile, line))
 	{
 		istringstream iss(line);
@@ -108,6 +117,7 @@ EdgeList ReadEdgeListFromFile(const char* filename)
 		if ((iss >> src >> dst))
 		{
 			edgelist.push_back(make_pair(src, dst));
+			edge2index[{src, dst}] = index++;
 		}
 	}
 
@@ -227,6 +237,7 @@ void shiloach_vishkin_parallel()
 		parallel_hooking();
 		parallel_compression();
 	}
+	printf("Shiloach-Vishkin parallel\n");
 }
 
 void shiloach_vishkin_serial()
@@ -304,14 +315,29 @@ void computeTruss(const EdgeList& edges)
 }
 
 
-void edge_hooking(const EdgeList& edges)
+void edge_hooking(const EdgeList& edges, vector<pair<int, int>>& phi_k)
 {
-#pragma omp parallel for
-	for (int i = 0; i < edges.size(); i++)
-	{
-		auto e = edges[i];		//got the edge in index i
 
-		vector<int>& temp = intersectlist[i];		//got the corresponding intersecting edges that makes triangle with e
+
+#pragma omp parallel
+	{
+		size_t numThreads = omp_get_num_threads();
+		#pragma omp single
+		{
+			super_edges.resize(numThreads);
+		}
+	}
+
+#pragma omp parallel for
+	for (int i = 0; i < phi_k.size(); i++)
+	{
+		size_t tid = omp_get_thread_num();
+
+		auto e = phi_k[i];		//got the edge in the current k
+
+		int index = edge2index[e];
+
+		vector<int>& temp = intersectlist[index];		//got the corresponding intersecting edges that makes triangle with e
 
 #pragma omp parallel for
 		for (int j = 0; j < temp.size(); j++)
@@ -360,18 +386,47 @@ void edge_hooking(const EdgeList& edges)
 					p[edges[p[e2]]] = p[e];
 					hooking = true;
 				}
+				
+				/*
+				if (trussk[e1] > k)
+				{
+					super_edges[tid].insert({ e, e1 });
+				}
+
+				if (trussk[e2] > k)
+				{
+					super_edges[tid].insert({ e, e2 });
+				}
+				*/
+			}
+
+			// the following code snippet is for super-edge insertion
+			int k1 = trussk[e1];
+			int k2 = trussk[e2];
+				
+			int lowest_k = min(k1, k2);
+			lowest_k = min(k, lowest_k);
+				
+			if(k > lowest_k && lowest_k == k1)
+			{
+				super_edges[tid].insert({p[e1], p[e]});
+			}
+
+			if(k > lowest_k && lowest_k == k2)
+			{
+				super_edges[tid].insert({p[e2], p[e]});
 			}
 		}
 	}
 }
 
 
-void edge_compression(const EdgeList& edges)
+void edge_compression(const EdgeList& edges, vector<pair<int, int>>& phi_k)
 {
 #pragma omp parallel for
-	for (int i = 0; i < edges.size(); i++)
+	for (int i = 0; i < phi_k.size(); i++)
 	{
-		auto e = edges[i];
+		auto e = phi_k[i];
 
 		while (p[edges[p[e]]] != p[e])    // p[e] will return me an index of an edge, using edges[p[e]] will return me the parent edge, applying p[edges[p[e]]] will return me the index of the parent edge
 		{
@@ -380,21 +435,23 @@ void edge_compression(const EdgeList& edges)
 	}
 }
 
+
 void conn_comp_edge(const EdgeList& edges)
 {
-	hooking = true;
-
-	while (hooking)
+	for (int i = kmin; i <= kmax; i++)
 	{
-		hooking = false;
-		edge_hooking(edges);
-		edge_compression(edges);
+		hooking = true;
+		while (hooking)
+		{
+			hooking = false;
+			edge_hooking(edges, trussgroups[i]);
+			edge_compression(edges, trussgroups[i]);
+		}
 	}
 }
 
 void readTruss(ifstream& in)
 {
-	
 	string line = "";
 
 	if (in.is_open())
@@ -413,9 +470,18 @@ void readTruss(ifstream& in)
 			pair<int, int> temp;
 			temp.first = tuple[0];
 			temp.second = tuple[1];
+			kmin = min(kmin, tuple[2]);
+			kmax = max(kmax, tuple[2]);
 			trussk.insert(make_pair(temp, tuple[2]));
+			trussgroups[tuple[2]].push_back(temp);
 		}
 	}
+	for (int i = 0; i < 3; i++)
+	{
+		trussgroups.erase(i);
+	}
+	kmin = max(kmin, 3);
+
 	in.close();
 }
 
@@ -440,12 +506,47 @@ void printEdgeParent(ofstream& out)
 	out.close();
 }
 
+void printSummaryGraph(ofstream& out)
+{
+	for (auto sp_edge : summary_graph)
+	{
+		out << sp_edge.first << "\t" << sp_edge.second << endl;
+	}
+	out.close();
+}
+
 void initializeEdgeParent(const EdgeList& edges)
 {
 	for (int i = 0; i < edges.size(); i++)
 	{
 		p[edges[i]] = i;
 	}
+}
+
+void createSummaryGraph(const EdgeList& edges)
+{
+	set<pair<int, int>> visited;
+
+	int total = 0;
+
+	for (int i = 0; i < super_edges.size(); i++)
+	{
+		set<pair<int, int>> temp = super_edges[i];
+		printf("superedge vector:%d, size:%lu\n", i, temp.size());
+		total += temp.size();
+		for (auto it = temp.begin(); it != temp.end(); it++)
+		{
+			int p1 = p[edges[(*it).first]];
+			int p2 = p[edges[(*it).second]];
+
+			if (!visited.count({ p1, p2 }))
+			{
+				summary_graph.push_back({ p1, p2 });
+				visited.insert({ p1, p2 });
+			}
+		}
+	}
+	printf("total pair of edges:%d\n", total);
 }
 
 int main(int argc, char* argv[])
@@ -456,10 +557,12 @@ int main(int argc, char* argv[])
 	networkfile = argv[1];
 	trussfile = argv[2];
 
+	kmin = INT_MAX;
+	kmax = INT_MIN;
 
 	EdgeList edgelist = ReadEdgeListFromFile(networkfile.c_str());
 
-	ofstream out1("out1.txt"), out2("out2.txt"), out3("out3.txt");
+	ofstream out1("out1.txt"), out2("out2.txt"), out3("out3.txt"), out4("out4.txt");
 
 	ifstream trussinput(trussfile.c_str());
 
@@ -506,7 +609,11 @@ int main(int argc, char* argv[])
 
 	conn_comp_edge(edgelist);
 
+	createSummaryGraph(edgelist);
+
 	printEdgeParent(out3);
+
+	printSummaryGraph(out4);
 
 	return 0;
 }
